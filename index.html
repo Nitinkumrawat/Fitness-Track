@@ -1,12 +1,1528 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>React Fitness App</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script src="App.js" type="module"></script>
-</body>
-</html>
+import React, { useState, useEffect, createContext, useContext } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { Home, Dumbbell, Target, Brain, LineChart, Bell, Droplet, Award, CalendarCheck, Moon, Heart, Smile, Users, Utensils, Loader2 } from 'lucide-react';
+
+// Context for Firebase and User
+const AppContext = createContext(null);
+
+const App = () => {
+    const [db, setDb] = useState(null);
+    const [auth, setAuth] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [isLoggedIn, setIsLoggedIn] = useState(false); // New state for login status
+    const [currentPage, setCurrentPage] = useState('dashboard'); // Default page
+    const [showModal, setShowModal] = useState(false);
+    const [modalContent, setModalContent] = useState('');
+
+    // Firebase initialization and authentication
+    useEffect(() => {
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config is missing. Please provide __firebase_config.");
+            setLoading(false);
+            return;
+        }
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            const firestore = getFirestore(app);
+            const authentication = getAuth(app);
+
+            setDb(firestore);
+            setAuth(authentication);
+
+            const unsubscribe = onAuthStateChanged(authentication, async (user) => {
+                if (user) {
+                    setUserId(user.uid);
+                    setIsLoggedIn(true);
+                    setLoading(false);
+                } else {
+                    // If no user is logged in, and an initial token is provided (e.g., for anonymous sign-in in Canvas),
+                    // try to sign in with it. Otherwise, set isLoggedIn to false to show the AuthPage.
+                    if (initialAuthToken) {
+                        try {
+                            await signInWithCustomToken(authentication, initialAuthToken);
+                        } catch (error) {
+                            console.error("Firebase custom token sign-in error:", error);
+                            setModalContent(`Custom token sign-in failed: ${error.message}`);
+                            setShowModal(true);
+                            setUserId(null); // Ensure userId is null if custom token fails
+                            setIsLoggedIn(false); // Show AuthPage
+                            setLoading(false);
+                        }
+                    } else {
+                        setUserId(null);
+                        setIsLoggedIn(false); // No user, no initial token, so show AuthPage
+                        setLoading(false);
+                    }
+                }
+            });
+
+            return () => unsubscribe();
+        } catch (error) {
+            console.error("Error initializing Firebase:", error);
+            setModalContent(`Firebase initialization error: ${error.message}`);
+            setShowModal(true);
+            setLoading(false);
+        }
+    }, []);
+
+    const showMessage = (message) => {
+        setModalContent(message);
+        setShowModal(true);
+    };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-100">
+                <Loader2 className="h-12 w-12 animate-spin text-blue-500" />
+                <p className="ml-4 text-lg text-gray-700">Loading Fitness App...</p>
+            </div>
+        );
+    }
+
+    return (
+        <AppContext.Provider value={{ db, auth, userId, showMessage }}>
+            {!isLoggedIn ? (
+                <AuthPage />
+            ) : (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-100 font-inter flex flex-col md:flex-row">
+                    {/* Sidebar Navigation */}
+                    <nav className="bg-white shadow-lg p-4 md:w-64 flex flex-row md:flex-col justify-around md:justify-start items-center md:items-start border-b md:border-r border-gray-200">
+                        <h1 className="text-2xl font-bold text-blue-700 mb-6 hidden md:block">FitTrack</h1>
+                        <div className="flex flex-row md:flex-col gap-2 md:gap-4 w-full">
+                            <NavItem icon={<Home />} label="Dashboard" page="dashboard" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Dumbbell />} label="Workout Log" page="workoutLog" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Target />} label="Goal Setting" page="goalSetting" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Brain />} label="AI Coach" page="aiRecommendations" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<LineChart />} label="Progress" page="progressTracking" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Bell />} label="Reminders" page="reminders" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Droplet />} label="Water Tracker" page="waterTracker" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Moon />} label="Sleep Tracker" page="sleepTracker" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Smile />} label="Mood Tracker" page="moodTracker" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Users />} label="Community" page="community" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                            <NavItem icon={<Award />} label="Challenges" page="challenges" setCurrentPage={setCurrentPage} currentPage={currentPage} />
+                        </div>
+                    </nav>
+
+                    {/* Main Content Area */}
+                    <main className="flex-1 p-4 md:p-8 overflow-auto">
+                        {userId && (
+                            <div className="mb-6 text-sm text-gray-600">
+                                Logged in as: <span className="font-semibold text-blue-600 break-all">{userId}</span>
+                            </div>
+                        )}
+
+                        {currentPage === 'dashboard' && <Dashboard />}
+                        {currentPage === 'workoutLog' && <WorkoutLogging />}
+                        {currentPage === 'goalSetting' && <GoalSetting />}
+                        {currentPage === 'aiRecommendations' && <AIRecommendations />}
+                        {currentPage === 'progressTracking' && <ProgressTracking />}
+                        {currentPage === 'reminders' && <NotificationReminder />}
+                        {currentPage === 'waterTracker' && <WaterIntakeTracker />}
+                        {currentPage === 'sleepTracker' && <SleepTracker />}
+                        {currentPage === 'moodTracker' && <MoodTracker />}
+                        {currentPage === 'community' && <CommunityFeature />}
+                        {currentPage === 'challenges' && <WeeklyFitnessChallenges />}
+
+                        {/* Statutory Features Disclaimer */}
+                        <div className="mt-8 p-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg shadow-sm text-sm">
+                            <p className="font-semibold mb-2">Important Legal & Compliance Information:</p>
+                            <ul className="list-disc list-inside space-y-1">
+                                <li>This application is a prototype and does not fully implement GDPR/DPDP or HIPAA compliance. In a production environment, robust data privacy (e.g., consent management, data portability, right to be forgotten) and health data security measures would be critical.</li>
+                                <li>Secure Login (OAuth, MFA) is crucial for production apps. This prototype uses anonymous Firebase authentication.</li>
+                                <li>In-app purchase compliance (Google/Apple policy adherence) is not implemented in this prototype.</li>
+                                <li>Data stored in Firestore follows basic user-specific segregation, but comprehensive security audits and rules are essential for production.</li>
+                            </ul>
+                        </div>
+                    </main>
+                </div>
+            )}
+
+            {/* Modal for Messages */}
+            {showModal && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full transform transition-all scale-100 opacity-100">
+                        <h3 className="text-lg font-semibold text-gray-800 mb-4">Notification</h3>
+                        <p className="text-gray-700 mb-6">{modalContent}</p>
+                        <button
+                            onClick={() => setShowModal(false)}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                        >
+                            Close
+                        </button>
+                    </div>
+                </div>
+            )}
+        </AppContext.Provider>
+    );
+};
+
+// NavItem Component for Sidebar
+const NavItem = ({ icon, label, page, setCurrentPage, currentPage }) => {
+    const isActive = currentPage === page;
+    return (
+        <button
+            onClick={() => setCurrentPage(page)}
+            className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-200 ease-in-out
+                        ${isActive ? 'bg-blue-100 text-blue-700 font-semibold shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}
+                        w-full justify-center md:justify-start`}
+        >
+            {icon}
+            <span className="hidden md:block">{label}</span>
+        </button>
+    );
+};
+
+// New AuthPage Component for Registration and Login
+const AuthPage = () => {
+    const { auth, showMessage } = useContext(AppContext);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isRegisterMode, setIsRegisterMode] = useState(true); // true for register, false for login
+    const [authLoading, setAuthLoading] = useState(false);
+
+    const handleAuth = async (e) => {
+        e.preventDefault();
+        setAuthLoading(true);
+        try {
+            if (isRegisterMode) {
+                await createUserWithEmailAndPassword(auth, email, password);
+                showMessage("Registration successful! You are now logged in.");
+            } else {
+                await signInWithEmailAndPassword(auth, email, password);
+                showMessage("Login successful!");
+            }
+        } catch (error) {
+            console.error("Authentication error:", error);
+            let errorMessage = "An unknown error occurred.";
+            if (error.code) {
+                switch (error.code) {
+                    case 'auth/email-already-in-use':
+                        errorMessage = "This email is already in use.";
+                        break;
+                    case 'auth/invalid-email':
+                        errorMessage = "Invalid email address.";
+                        break;
+                    case 'auth/operation-not-allowed':
+                        errorMessage = "Email/password accounts are not enabled. Please contact support.";
+                        break;
+                    case 'auth/weak-password':
+                        errorMessage = "Password is too weak. Please use at least 6 characters.";
+                        break;
+                    case 'auth/user-not-found':
+                    case 'auth/wrong-password':
+                        errorMessage = "Invalid email or password.";
+                        break;
+                    case 'auth/network-request-failed':
+                        errorMessage = "Network error. Please check your internet connection.";
+                        break;
+                    default:
+                        errorMessage = `Authentication error: ${error.message}`;
+                }
+            }
+            showMessage(errorMessage);
+        } finally {
+            setAuthLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-purple-100 p-4">
+            <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md">
+                <h2 className="text-3xl font-bold text-blue-800 mb-6 text-center">
+                    {isRegisterMode ? 'Register' : 'Login'}
+                </h2>
+                <form onSubmit={handleAuth} className="space-y-4">
+                    <div>
+                        <label htmlFor="email" className="block text-gray-700 text-sm font-bold mb-2">Email</label>
+                        <input
+                            type="email"
+                            id="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="your@example.com"
+                            className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="password" className="block text-gray-700 text-sm font-bold mb-2">Password</label>
+                        <input
+                            type="password"
+                            id="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="********"
+                            className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            required
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center justify-center"
+                        disabled={authLoading}
+                    >
+                        {authLoading ? (
+                            <>
+                                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Processing...
+                            </>
+                        ) : (
+                            isRegisterMode ? 'Register' : 'Login'
+                        )}
+                    </button>
+                </form>
+                <div className="mt-6 text-center">
+                    <button
+                        onClick={() => setIsRegisterMode(!isRegisterMode)}
+                        className="text-blue-600 hover:text-blue-800 font-semibold text-sm transition duration-200"
+                    >
+                        {isRegisterMode ? 'Already have an account? Login' : 'Need an account? Register'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// --- Critical Path Features ---
+
+// 3. Dashboard with Step/Calorie/Heart Rate Display
+const Dashboard = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [healthData, setHealthData] = useState({ steps: 0, caloriesBurned: 0, heartRate: 0, waterIntake: 0, sleepDuration: 0, mood: 'neutral' });
+    const [loadingData, setLoadingData] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setHealthData(docSnap.data());
+            } else {
+                setHealthData({ steps: 0, caloriesBurned: 0, heartRate: 0, waterIntake: 0, sleepDuration: 0, mood: 'neutral' });
+            }
+            setLoadingData(false);
+        }, (error) => {
+            console.error("Error fetching dashboard data:", error);
+            showMessage("Failed to load dashboard data.");
+            setLoadingData(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleUpdateHealthData = async (field, value, isString = false) => { // Added isString parameter
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        try {
+            const currentData = (await getDoc(docRef)).data() || {};
+            const updatedValue = isString ? value : Number(value); // Conditionally convert to Number
+            await setDoc(docRef, { ...currentData, [field]: updatedValue, date: today }, { merge: true });
+            showMessage(`${field} updated successfully!`);
+        } catch (error) {
+            console.error(`Error updating ${field}:`, error);
+            showMessage(`Failed to update ${field}.`);
+        }
+    };
+
+    if (loadingData) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <p className="ml-2 text-gray-600">Loading dashboard...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Your Daily Overview</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                <MetricCard icon={<Heart className="text-red-500" />} label="Heart Rate" value={healthData.heartRate} unit="bpm" onUpdate={(val) => handleUpdateHealthData('heartRate', val)} />
+                <MetricCard icon={<Dumbbell className="text-green-500" />} label="Calories Burned" value={healthData.caloriesBurned} unit="kcal" onUpdate={(val) => handleUpdateHealthData('caloriesBurned', val)} />
+                <MetricCard icon={<Award className="text-yellow-500" />} label="Steps" value={healthData.steps} unit="steps" onUpdate={(val) => handleUpdateHealthData('steps', val)} />
+                <MetricCard icon={<Droplet className="text-blue-500" />} label="Water Intake" value={healthData.waterIntake} unit="ml" onUpdate={(val) => handleUpdateHealthData('waterIntake', val)} />
+                <MetricCard icon={<Moon className="text-purple-500" />} label="Sleep Duration" value={healthData.sleepDuration} unit="hours" onUpdate={(val) => handleUpdateHealthData('sleepDuration', val)} />
+                <MetricCard icon={<Smile className="text-orange-500" />} label="Mood" value={healthData.mood} unit="" onUpdate={(val) => handleUpdateHealthData('mood', val, true)} isMood={true} />
+            </div>
+
+            <h3 className="text-2xl font-semibold text-blue-700 mb-4">Quick Actions</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button
+                    onClick={() => showMessage("Simulating 'Sync Health Data'. In a real app, this would integrate with device health APIs (e.g., Apple HealthKit, Google Fit) after obtaining user permissions.")}
+                    className="flex items-center justify-center p-4 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out"
+                >
+                    <Heart className="mr-2" /> Sync Health Data
+                </button>
+                <button
+                    onClick={() => showMessage("Simulating 'Check Rewards'. Earn rewards for reaching daily/weekly goals!")}
+                    className="flex items-center justify-center p-4 bg-yellow-500 text-white rounded-lg shadow-md hover:bg-yellow-600 transition duration-300 ease-in-out"
+                >
+                    <Award className="mr-2" /> Check Rewards
+                </button>
+            </div>
+        </div>
+    );
+};
+
+const MetricCard = ({ icon, label, value, unit, onUpdate, isMood = false }) => {
+    const [editMode, setEditMode] = useState(false);
+    const [inputValue, setInputValue] = useState(value);
+
+    useEffect(() => {
+        setInputValue(value);
+    }, [value]);
+
+    const handleSave = () => {
+        onUpdate(inputValue);
+        setEditMode(false);
+    };
+
+    return (
+        <div className="bg-white rounded-lg shadow-md p-5 flex flex-col items-center justify-center text-center border border-gray-200">
+            <div className="text-4xl mb-3">{icon}</div>
+            <h4 className="text-lg font-semibold text-gray-700 mb-2">{label}</h4>
+            {editMode ? (
+                isMood ? (
+                    <select
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        className="p-2 border border-gray-300 rounded-md w-full mb-2"
+                    >
+                        <option value="happy">Happy 😊</option>
+                        <option value="neutral">Neutral 😐</option>
+                        <option value="sad">Sad 😔</option>
+                        <option value="energetic">Energetic 💪</option>
+                        <option value="tired">Tired 😴</option>
+                        <option value="stressed">Stressed 😥</option> {/* Added stressed mood */}
+                    </select>
+                ) : (
+                    <input
+                        type="number"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        className="p-2 border border-gray-300 rounded-md w-full mb-2"
+                    />
+                )
+            ) : (
+                <p className="text-3xl font-bold text-blue-600">{value} <span className="text-xl text-gray-500">{unit}</span></p>
+            )}
+            <button
+                onClick={() => editMode ? handleSave() : setEditMode(true)}
+                className="mt-3 bg-blue-500 hover:bg-blue-600 text-white text-sm py-1 px-3 rounded-md transition duration-200"
+            >
+                {editMode ? 'Save' : 'Edit'}
+            </button>
+        </div>
+    );
+};
+
+
+// 4. Workout Logging
+const WorkoutLogging = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [workoutType, setWorkoutType] = useState('');
+    const [duration, setDuration] = useState('');
+    const [caloriesBurned, setCaloriesBurned] = useState('');
+    const [workouts, setWorkouts] = useState([]);
+    const [loadingWorkouts, setLoadingWorkouts] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+
+        const q = collection(db, `artifacts/${__app_id}/users/${userId}/workouts`);
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const workoutsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setWorkouts(workoutsList);
+            setLoadingWorkouts(false);
+        }, (error) => {
+            console.error("Error fetching workouts:", error);
+            showMessage("Failed to load workouts.");
+            setLoadingWorkouts(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleLogWorkout = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        if (!workoutType || !duration || !caloriesBurned) {
+            showMessage("Please fill all workout fields.");
+            return;
+        }
+
+        try {
+            await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/workouts`), {
+                workoutType,
+                duration: Number(duration),
+                caloriesBurned: Number(caloriesBurned),
+                date: new Date().toISOString().slice(0, 10),
+                timestamp: new Date(),
+            });
+            showMessage("Workout logged successfully!");
+            setWorkoutType('');
+            setDuration('');
+            setCaloriesBurned('');
+        } catch (error) {
+            console.error("Error logging workout:", error);
+            showMessage("Failed to log workout.");
+        }
+    };
+
+    const handleDeleteWorkout = async (id) => {
+        if (!db || !userId) return;
+        try {
+            await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/workouts`, id));
+            showMessage("Workout deleted successfully!");
+        } catch (error) {
+            console.error("Error deleting workout:", error);
+            showMessage("Failed to delete workout.");
+        }
+    };
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Log Your Workout</h2>
+            <form onSubmit={handleLogWorkout} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div>
+                    <label htmlFor="workoutType" className="block text-gray-700 text-sm font-bold mb-2">Workout Type</label>
+                    <input
+                        type="text"
+                        id="workoutType"
+                        value={workoutType}
+                        onChange={(e) => setWorkoutType(e.target.value)}
+                        placeholder="e.g., Running, Weightlifting"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="duration" className="block text-gray-700 text-sm font-bold mb-2">Duration (minutes)</label>
+                    <input
+                        type="number"
+                        id="duration"
+                        value={duration}
+                        onChange={(e) => setDuration(e.target.value)}
+                        placeholder="e.g., 30"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="md:col-span-2">
+                    <label htmlFor="caloriesBurned" className="block text-gray-700 text-sm font-bold mb-2">Calories Burned (approx.)</label>
+                    <input
+                        type="number"
+                        id="caloriesBurned"
+                        value={caloriesBurned}
+                        onChange={(e) => setCaloriesBurned(e.target.value)}
+                        placeholder="e.g., 250"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="md:col-span-2">
+                    <button
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                    >
+                        Log Workout
+                    </button>
+                </div>
+            </form>
+
+            <h3 className="text-2xl font-semibold text-blue-700 mb-4">Your Recent Workouts</h3>
+            {loadingWorkouts ? (
+                <div className="flex items-center justify-center p-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                    <p className="ml-2 text-gray-600">Loading workouts...</p>
+                </div>
+            ) : workouts.length === 0 ? (
+                <p className="text-gray-600">No workouts logged yet. Start tracking!</p>
+            ) : (
+                <div className="space-y-4">
+                    {workouts.map((workout) => (
+                        <div key={workout.id} className="bg-gray-50 p-4 rounded-lg shadow-sm flex justify-between items-center border border-gray-200">
+                            <div>
+                                <p className="font-semibold text-gray-800">{workout.workoutType}</p>
+                                <p className="text-sm text-gray-600">{workout.duration} mins | {workout.caloriesBurned} kcal on {workout.date}</p>
+                            </div>
+                            <button
+                                onClick={() => handleDeleteWorkout(workout.id)}
+                                className="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-200"
+                                title="Delete Workout"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 5. Goal Setting Module
+const GoalSetting = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [goalType, setGoalType] = useState('steps');
+    const [targetValue, setTargetValue] = useState('');
+    const [goals, setGoals] = useState([]);
+    const [loadingGoals, setLoadingGoals] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+
+        const q = collection(db, `artifacts/${__app_id}/users/${userId}/goals`);
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const goalsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setGoals(goalsList);
+            setLoadingGoals(false);
+        }, (error) => {
+            console.error("Error fetching goals:", error);
+            showMessage("Failed to load goals.");
+            setLoadingGoals(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleSetGoal = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        if (!goalType || !targetValue) {
+            showMessage("Please fill all goal fields.");
+            return;
+        }
+
+        try {
+            await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/goals`), {
+                goalType,
+                targetValue: Number(targetValue),
+                startDate: new Date().toISOString().slice(0, 10),
+                endDate: '', // User can set this later or it can be a weekly/monthly goal
+                isAchieved: false,
+                timestamp: new Date(),
+            });
+            showMessage("Goal set successfully!");
+            setTargetValue('');
+        } catch (error) {
+            console.error("Error setting goal:", error);
+            showMessage("Failed to set goal.");
+        }
+    };
+
+    const handleDeleteGoal = async (id) => {
+        if (!db || !userId) return;
+        try {
+            await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/goals`, id));
+            showMessage("Goal deleted successfully!");
+        } catch (error) {
+            console.error("Error deleting goal:", error);
+            showMessage("Failed to delete goal.");
+        }
+    };
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Set Your Fitness Goals</h2>
+            <form onSubmit={handleSetGoal} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div>
+                    <label htmlFor="goalType" className="block text-gray-700 text-sm font-bold mb-2">Goal Type</label>
+                    <select
+                        id="goalType"
+                        value={goalType}
+                        onChange={(e) => setGoalType(e.target.value)}
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="steps">Daily Steps</option>
+                        <option value="calories">Daily Calories Burned</option>
+                        <option value="workouts">Workouts Per Week</option>
+                        <option value="water">Daily Water Intake (ml)</option>
+                        <option value="sleep">Daily Sleep (hours)</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="targetValue" className="block text-gray-700 text-sm font-bold mb-2">Target Value</label>
+                    <input
+                        type="number"
+                        id="targetValue"
+                        value={targetValue}
+                        onChange={(e) => setTargetValue(e.target.value)}
+                        placeholder="e.g., 10000 (steps)"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="md:col-span-2">
+                    <button
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                    >
+                        Set Goal
+                    </button>
+                </div>
+            </form>
+
+            <h3 className="text-2xl font-semibold text-blue-700 mb-4">Your Current Goals</h3>
+            {loadingGoals ? (
+                <div className="flex items-center justify-center p-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                    <p className="ml-2 text-gray-600">Loading goals...</p>
+                </div>
+            ) : goals.length === 0 ? (
+                <p className="text-gray-600">No goals set yet. Let's define some targets!</p>
+            ) : (
+                <div className="space-y-4">
+                    {goals.map((goal) => (
+                        <div key={goal.id} className="bg-gray-50 p-4 rounded-lg shadow-sm flex justify-between items-center border border-gray-200">
+                            <div>
+                                <p className="font-semibold text-gray-800">
+                                    {goal.goalType === 'steps' && 'Daily Steps'}
+                                    {goal.goalType === 'calories' && 'Daily Calories Burned'}
+                                    {goal.goalType === 'workouts' && 'Workouts Per Week'}
+                                    {goal.goalType === 'water' && 'Daily Water Intake'}
+                                    {goal.goalType === 'sleep' && 'Daily Sleep'}
+                                </p>
+                                <p className="text-sm text-gray-600">Target: {goal.targetValue} {
+                                    goal.goalType === 'steps' ? 'steps' :
+                                    goal.goalType === 'calories' ? 'kcal' :
+                                    goal.goalType === 'workouts' ? 'workouts' :
+                                    goal.goalType === 'water' ? 'ml' :
+                                    goal.goalType === 'sleep' ? 'hours' : ''
+                                }</p>
+                                <p className="text-xs text-gray-500">Set on: {goal.startDate}</p>
+                            </div>
+                            <button
+                                onClick={() => handleDeleteGoal(goal.id)}
+                                className="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-200"
+                                title="Delete Goal"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 6. AI-based Recommendations
+const AIRecommendations = () => {
+    const { userId, showMessage } = useContext(AppContext);
+    const [recommendationType, setRecommendationType] = useState('general');
+    const [aiResponse, setAiResponse] = useState('');
+    const [loadingAI, setLoadingAI] = useState(false);
+
+    const handleGenerateRecommendation = async () => {
+        if (!userId) {
+            showMessage("User not authenticated.");
+            return;
+        }
+
+        setLoadingAI(true);
+        setAiResponse('');
+
+        let prompt = "";
+        if (recommendationType === 'general') {
+            prompt = "Provide a general fitness recommendation for someone looking to improve their overall health.";
+        } else if (recommendationType === 'workout_plan') {
+            prompt = "Generate a simple 3-day beginner workout plan focusing on full-body strength and cardio. Include exercises and reps/duration.";
+        } else if (recommendationType === 'diet_plan') {
+            prompt = "Suggest a simple, healthy daily diet plan for an active individual, including breakfast, lunch, dinner, and snacks.";
+        }
+
+        try {
+            const chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            const payload = { contents: chatHistory };
+            const apiKey = ""; // Canvas will provide this
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                const text = result.candidates[0].content.parts[0].text;
+                setAiResponse(text);
+            } else {
+                setAiResponse("Could not generate a recommendation. Please try again.");
+                console.error("Unexpected AI response structure:", result);
+            }
+        } catch (error) {
+            console.error("Error calling Gemini API:", error);
+            setAiResponse("Failed to connect to AI. Please check your network or try again later.");
+        } finally {
+            setLoadingAI(false);
+        }
+    };
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">AI Fitness Coach</h2>
+            <div className="mb-6 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <label htmlFor="recommendationType" className="block text-gray-700 text-sm font-bold mb-2">Select Recommendation Type</label>
+                <select
+                    id="recommendationType"
+                    value={recommendationType}
+                    onChange={(e) => setRecommendationType(e.target.value)}
+                    className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                >
+                    <option value="general">General Fitness Advice</option>
+                    <option value="workout_plan">AI-generated Workout Plan</option>
+                    <option value="diet_plan">Personalized Diet Plan</option>
+                </select>
+                <button
+                    onClick={handleGenerateRecommendation}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 flex items-center justify-center"
+                    disabled={loadingAI}
+                >
+                    {loadingAI ? (
+                        <>
+                            <Loader2 className="h-5 w-5 animate-spin mr-2" /> Generating...
+                        </>
+                    ) : (
+                        <>
+                            <Brain className="mr-2" /> Get AI Recommendation
+                        </>
+                    )}
+                </button>
+            </div>
+
+            {aiResponse && (
+                <div className="mt-8 p-6 bg-gray-50 rounded-lg shadow-inner border border-gray-200">
+                    <h3 className="text-2xl font-semibold text-blue-700 mb-4">AI Coach Says:</h3>
+                    <div className="prose max-w-none text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: aiResponse.replace(/\n/g, '<br />') }} />
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 7. Progress Tracking and Visualization
+const ProgressTracking = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [healthData, setHealthData] = useState([]);
+    const [workouts, setWorkouts] = useState([]);
+    const [loadingProgress, setLoadingProgress] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+
+        const healthDataRef = collection(db, `artifacts/${__app_id}/users/${userId}/healthData`);
+        const workoutsRef = collection(db, `artifacts/${__app_id}/users/${userId}/workouts`);
+
+        // Fetch health data
+        const unsubscribeHealth = onSnapshot(healthDataRef, (snapshot) => {
+            const dataList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Sort by date for better visualization
+            dataList.sort((a, b) => new Date(a.date) - new Date(b.date));
+            setHealthData(dataList);
+            setLoadingProgress(false);
+        }, (error) => {
+            console.error("Error fetching health data for progress:", error);
+            showMessage("Failed to load health progress data.");
+            setLoadingProgress(false);
+        });
+
+        // Fetch workout data
+        const unsubscribeWorkouts = onSnapshot(workoutsRef, (snapshot) => {
+            const dataList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            dataList.sort((a, b) => new Date(a.date) - new Date(b.date));
+            setWorkouts(dataList);
+            setLoadingProgress(false);
+        }, (error) => {
+            console.error("Error fetching workout data for progress:", error);
+            showMessage("Failed to load workout progress data.");
+            setLoadingProgress(false);
+        });
+
+        return () => {
+            unsubscribeHealth();
+            unsubscribeWorkouts();
+        };
+    }, [db, userId, showMessage]);
+
+    // Simple visualization: Aggregate data for a weekly view or just list
+    const getWeeklySummary = (data, type) => {
+        const weeklySummary = {};
+        data.forEach(item => {
+            const date = new Date(item.date);
+            const startOfWeek = new Date(date.setDate(date.getDate() - date.getDay())).toISOString().slice(0, 10); // Sunday as start of week
+            if (!weeklySummary[startOfWeek]) {
+                weeklySummary[startOfWeek] = { steps: 0, caloriesBurned: 0, workouts: 0, waterIntake: 0, sleepDuration: 0 };
+            }
+            if (type === 'health') {
+                weeklySummary[startOfWeek].steps += item.steps || 0;
+                weeklySummary[startOfWeek].caloriesBurned += item.caloriesBurned || 0;
+                weeklySummary[startOfWeek].waterIntake += item.waterIntake || 0;
+                weeklySummary[startOfWeek].sleepDuration += item.sleepDuration || 0;
+            } else if (type === 'workouts') {
+                weeklySummary[startOfWeek].workouts += 1;
+                weeklySummary[startOfWeek].caloriesBurned += item.caloriesBurned || 0;
+            }
+        });
+        return Object.entries(weeklySummary).map(([week, data]) => ({ week, ...data }));
+    };
+
+    const weeklyHealth = getWeeklySummary(healthData, 'health');
+    const weeklyWorkouts = getWeeklySummary(workouts, 'workouts');
+
+    if (loadingProgress) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <p className="ml-2 text-gray-600">Loading progress data...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Your Progress Overview</h2>
+
+            <div className="mb-8">
+                <h3 className="text-2xl font-semibold text-blue-700 mb-4">Daily Health Metrics</h3>
+                {healthData.length === 0 ? (
+                    <p className="text-gray-600">No daily health data recorded yet.</p>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {healthData.map((data) => (
+                            <div key={data.id} className="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200">
+                                <p className="font-semibold text-gray-800">{data.date}</p>
+                                <p className="text-sm text-gray-600">Steps: {data.steps || 0}</p>
+                                <p className="text-sm text-gray-600">Calories Burned: {data.caloriesBurned || 0} kcal</p>
+                                <p className="text-sm text-gray-600">Water: {data.waterIntake || 0} ml</p>
+                                <p className="text-sm text-gray-600">Sleep: {data.sleepDuration || 0} hours</p>
+                                <p className="text-sm text-gray-600">Mood: {data.mood || 'N/A'}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div className="mb-8">
+                <h3 className="text-2xl font-semibold text-blue-700 mb-4">Weekly Health Summary</h3>
+                {weeklyHealth.length === 0 ? (
+                    <p className="text-gray-600">No weekly health summary available.</p>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {weeklyHealth.map((summary) => (
+                            <div key={summary.week} className="bg-blue-50 p-4 rounded-lg shadow-sm border border-blue-200">
+                                <p className="font-semibold text-blue-800">Week of {summary.week}</p>
+                                <p className="text-sm text-gray-700">Total Steps: {summary.steps}</p>
+                                <p className="text-sm text-gray-700">Total Calories Burned: {summary.caloriesBurned} kcal</p>
+                                <p className="text-sm text-gray-700">Total Water Intake: {summary.waterIntake} ml</p>
+                                <p className="text-sm text-gray-700">Total Sleep: {summary.sleepDuration} hours</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div>
+                <h3 className="text-2xl font-semibold text-blue-700 mb-4">Weekly Workout Summary</h3>
+                {weeklyWorkouts.length === 0 ? (
+                    <p className="text-gray-600">No weekly workout summary available.</p>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {weeklyWorkouts.map((summary) => (
+                            <div key={summary.week} className="bg-green-50 p-4 rounded-lg shadow-sm border border-green-200">
+                                <p className="font-semibold text-green-800">Week of {summary.week}</p>
+                                <p className="text-sm text-gray-700">Workouts Logged: {summary.workouts}</p>
+                                <p className="text-sm text-gray-700">Calories Burned: {summary.caloriesBurned} kcal</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// 8. Notification & Reminder System
+const NotificationReminder = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [reminderText, setReminderText] = useState('');
+    const [reminderTime, setReminderTime] = useState('');
+    const [reminders, setReminders] = useState([]);
+    const [loadingReminders, setLoadingReminders] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+
+        const q = collection(db, `artifacts/${__app_id}/users/${userId}/reminders`);
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const remindersList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setReminders(remindersList);
+            setLoadingReminders(false);
+        }, (error) => {
+            console.error("Error fetching reminders:", error);
+            showMessage("Failed to load reminders.");
+            setLoadingReminders(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleSetReminder = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        if (!reminderText || !reminderTime) {
+            showMessage("Please fill all reminder fields.");
+            return;
+        }
+
+        try {
+            await addDoc(collection(db, `artifacts/${__app_id}/users/${userId}/reminders`), {
+                text: reminderText,
+                time: reminderTime, // Stored as HH:MM string
+                createdAt: new Date().toISOString(),
+            });
+            showMessage("Reminder set successfully!");
+            setReminderText('');
+            setReminderTime('');
+        } catch (error) {
+            console.error("Error setting reminder:", error);
+            showMessage("Failed to set reminder.");
+        }
+    };
+
+    const handleDeleteReminder = async (id) => {
+        if (!db || !userId) return;
+        try {
+            await deleteDoc(doc(db, `artifacts/${__app_id}/users/${userId}/reminders`, id));
+            showMessage("Reminder deleted successfully!");
+        } catch (error) {
+            console.error("Error deleting reminder:", error);
+            showMessage("Failed to delete reminder.");
+        }
+    };
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Set Reminders & Notifications</h2>
+            <form onSubmit={handleSetReminder} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div>
+                    <label htmlFor="reminderText" className="block text-gray-700 text-sm font-bold mb-2">Reminder Message</label>
+                    <input
+                        type="text"
+                        id="reminderText"
+                        value={reminderText}
+                        onChange={(e) => setReminderText(e.target.value)}
+                        placeholder="e.g., Drink water, Go for a run"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="reminderTime" className="block text-gray-700 text-sm font-bold mb-2">Time (HH:MM)</label>
+                    <input
+                        type="time"
+                        id="reminderTime"
+                        value={reminderTime}
+                        onChange={(e) => setReminderTime(e.target.value)}
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="md:col-span-2">
+                    <button
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                    >
+                        Set Reminder
+                    </button>
+                </div>
+            </form>
+
+            <h3 className="text-2xl font-semibold text-blue-700 mb-4">Your Active Reminders</h3>
+            {loadingReminders ? (
+                <div className="flex items-center justify-center p-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
+                    <p className="ml-2 text-gray-600">Loading reminders...</p>
+                </div>
+            ) : reminders.length === 0 ? (
+                <p className="text-gray-600">No reminders set yet. Stay on track!</p>
+            ) : (
+                <div className="space-y-4">
+                    {reminders.map((reminder) => (
+                        <div key={reminder.id} className="bg-gray-50 p-4 rounded-lg shadow-sm flex justify-between items-center border border-gray-200">
+                            <div>
+                                <p className="font-semibold text-gray-800">{reminder.text}</p>
+                                <p className="text-sm text-gray-600">At: {reminder.time}</p>
+                            </div>
+                            <button
+                                onClick={() => handleDeleteReminder(reminder.id)}
+                                className="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100 transition duration-200"
+                                title="Delete Reminder"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+            <p className="mt-6 text-sm text-gray-500">Note: This system sets reminders within the app. For external push notifications, additional browser/device API integration would be required.</p>
+        </div>
+    );
+};
+
+
+// --- Kano Survey Features (Top 10) ---
+
+// 1. Water Intake Tracker (Integrated into Dashboard, but also a dedicated page)
+const WaterIntakeTracker = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [waterAmount, setWaterAmount] = useState('');
+    const [dailyWaterIntake, setDailyWaterIntake] = useState(0);
+    const [loadingWater, setLoadingWater] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setDailyWaterIntake(docSnap.data().waterIntake || 0);
+            } else {
+                setDailyWaterIntake(0);
+            }
+            setLoadingWater(false);
+        }, (error) => {
+            console.error("Error fetching water intake:", error);
+            showMessage("Failed to load water intake data.");
+            setLoadingWater(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleLogWater = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        if (!waterAmount || Number(waterAmount) <= 0) {
+            showMessage("Please enter a valid water amount.");
+            return;
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        try {
+            const currentData = (await getDoc(docRef)).data() || {};
+            const newWaterIntake = (currentData.waterIntake || 0) + Number(waterAmount);
+            await setDoc(docRef, { ...currentData, waterIntake: newWaterIntake, date: today }, { merge: true });
+            showMessage(`Logged ${waterAmount}ml of water!`);
+            setWaterAmount('');
+        } catch (error) {
+            console.error("Error logging water:", error);
+            showMessage("Failed to log water intake.");
+        }
+    };
+
+    if (loadingWater) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <p className="ml-2 text-gray-600">Loading water tracker...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Hydration Tracker</h2>
+            <div className="mb-6 text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-xl font-semibold text-blue-700">Today's Water Intake:</p>
+                <p className="text-4xl font-bold text-blue-600 mt-2">{dailyWaterIntake} ml</p>
+            </div>
+
+            <form onSubmit={handleLogWater} className="flex flex-col md:flex-row gap-4 mb-8 p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div className="flex-1">
+                    <label htmlFor="waterAmount" className="block text-gray-700 text-sm font-bold mb-2">Add Water (ml)</label>
+                    <input
+                        type="number"
+                        id="waterAmount"
+                        value={waterAmount}
+                        onChange={(e) => setWaterAmount(e.target.value)}
+                        placeholder="e.g., 250"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+                <div className="md:self-end">
+                    <button
+                        type="submit"
+                        className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                    >
+                        <Droplet className="inline-block mr-2" /> Log Water
+                    </button>
+                </div>
+            </form>
+
+            <h3 className="text-2xl font-semibold text-blue-700 mb-4">Quick Add</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[250, 500, 750, 1000].map(amount => (
+                    <button
+                        key={amount}
+                        onClick={() => handleLogWater({ preventDefault: () => {}, target: { value: amount } })} // Simulate event
+                        className="bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg shadow-md transition duration-300 ease-in-out text-lg"
+                    >
+                        +{amount} ml
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// 2. Step Counter with Rewards (Partially integrated into Dashboard, rewards placeholder)
+const StepCounterWithRewards = () => {
+    const { showMessage } = useContext(AppContext);
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Step Counter & Rewards</h2>
+            <p className="text-gray-700 mb-4">Your daily steps are tracked on the Dashboard. Keep walking to reach your goals!</p>
+            <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 text-yellow-800 mb-6">
+                <p className="font-semibold mb-2">Reward System Placeholder:</p>
+                <p>In a full implementation, you would earn points or badges for hitting step milestones, completing challenges, or maintaining streaks. These rewards could unlock new features, virtual items, or discounts.</p>
+            </div>
+            <button
+                onClick={() => showMessage("Simulating 'Claim Daily Reward'. Great job on your steps today!")}
+                className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50"
+            >
+                <Award className="inline-block mr-2" /> Claim Daily Reward
+            </button>
+        </div>
+    );
+};
+
+
+// 3. Weekly Fitness Challenges
+const WeeklyFitnessChallenges = () => {
+    const { showMessage } = useContext(AppContext);
+    const challenges = [
+        { id: 1, name: "7-Day Plank Challenge", description: "Hold a plank for increasing durations each day.", status: "Active" },
+        { id: 2, name: "10,000 Steps Daily", description: "Achieve 10,000 steps every day for a week.", status: "Upcoming" },
+        { id: 3, name: "No Sugar Week", description: "Eliminate all added sugars from your diet for 7 days.", status: "Completed" },
+    ];
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Weekly Fitness Challenges</h2>
+            <p className="text-gray-700 mb-6">Join exciting challenges to boost your fitness journey and earn rewards!</p>
+
+            <div className="space-y-4">
+                {challenges.map(challenge => (
+                    <div key={challenge.id} className="bg-gray-50 p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center">
+                        <div>
+                            <p className="font-semibold text-gray-800">{challenge.name}</p>
+                            <p className="text-sm text-gray-600">{challenge.description}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold
+                            ${challenge.status === 'Active' ? 'bg-green-100 text-green-800' :
+                              challenge.status === 'Upcoming' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'}`}>
+                            {challenge.status}
+                        </span>
+                    </div>
+                ))}
+            </div>
+
+            <button
+                onClick={() => showMessage("Simulating 'Browse More Challenges'. Discover new ways to challenge yourself!")}
+                className="mt-8 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+            >
+                <CalendarCheck className="inline-block mr-2" /> Browse More Challenges
+            </button>
+        </div>
+    );
+};
+
+// 4. AI-generated Workout Plans (Integrated into AI Recommendations)
+// 7. Personalized Diet Plan (Integrated into AI Recommendations)
+
+// 5. Sleep Tracker with Analytics (Integrated into Dashboard, but also a dedicated page)
+const SleepTracker = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [sleepDuration, setSleepDuration] = useState('');
+    const [dailySleep, setDailySleep] = useState(0);
+    const [loadingSleep, setLoadingSleep] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setDailySleep(docSnap.data().sleepDuration || 0);
+            } else {
+                setDailySleep(0);
+            }
+            setLoadingSleep(false);
+        }, (error) => {
+            console.error("Error fetching sleep data:", error);
+            showMessage("Failed to load sleep data.");
+            setLoadingSleep(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleLogSleep = async (e) => {
+        e.preventDefault();
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+        if (!sleepDuration || Number(sleepDuration) <= 0) {
+            showMessage("Please enter a valid sleep duration.");
+            return;
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        try {
+            const currentData = (await getDoc(docRef)).data() || {};
+            await setDoc(docRef, { ...currentData, sleepDuration: Number(sleepDuration), date: today }, { merge: true });
+            showMessage(`Logged ${sleepDuration} hours of sleep!`);
+            setSleepDuration('');
+        } catch (error) {
+            console.error("Error logging sleep:", error);
+            showMessage("Failed to log sleep.");
+        }
+    };
+
+    if (loadingSleep) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <p className="ml-2 text-gray-600">Loading sleep tracker...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Sleep Tracker</h2>
+            <div className="mb-6 text-center p-4 bg-purple-50 rounded-lg border border-purple-200">
+                <p className="text-xl font-semibold text-purple-700">Today's Sleep:</p>
+                <p className="text-4xl font-bold text-purple-600 mt-2">{dailySleep} hours</p>
+            </div>
+
+            <form onSubmit={handleLogSleep} className="flex flex-col md:flex-row gap-4 mb-8 p-4 border border-purple-200 rounded-lg bg-purple-50">
+                <div className="flex-1">
+                    <label htmlFor="sleepDuration" className="block text-gray-700 text-sm font-bold mb-2">Sleep Duration (hours)</label>
+                    <input
+                        type="number"
+                        step="0.1"
+                        id="sleepDuration"
+                        value={sleepDuration}
+                        onChange={(e) => setSleepDuration(e.target.value)}
+                        placeholder="e.g., 7.5"
+                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                </div>
+                <div className="md:self-end">
+                    <button
+                        type="submit"
+                        className="w-full md:w-auto bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50"
+                    >
+                        <Moon className="inline-block mr-2" /> Log Sleep
+                    </button>
+                </div>
+            </form>
+
+            <div className="mt-8 p-4 bg-gray-50 rounded-lg shadow-inner border border-gray-200">
+                <h3 className="text-2xl font-semibold text-blue-700 mb-4">Sleep Analytics Placeholder</h3>
+                <p className="text-gray-700">In a full version, this section would display graphs and insights into your sleep patterns, consistency, and quality over time. (e.g., average sleep, sleep debt, wake-up times).</p>
+            </div>
+        </div>
+    );
+};
+
+// 6. Integration with Wearables (Placeholder)
+const IntegrationWithWearables = () => {
+    const { showMessage } = useContext(AppContext); // Use showMessage from context
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Wearable Integration</h2>
+            <p className="text-gray-700 mb-4">Seamlessly connect your fitness trackers and smartwatches to sync data automatically.</p>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 text-blue-800">
+                <p className="font-semibold mb-2">Feature Placeholder:</p>
+                <p>This feature would allow you to connect devices like Apple Watch, Fitbit, Garmin, etc., to automatically import steps, heart rate, sleep, and workout data. This requires specific SDK integrations and user permissions for each platform.</p>
+            </div>
+            <button
+                onClick={() => showMessage("Simulating 'Connect Wearable'. This would open a device connection flow.")} // Changed alert to showMessage
+                className="mt-8 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+            >
+                <Heart className="inline-block mr-2" /> Connect Your Wearable
+            </button>
+        </div>
+    );
+};
+
+// 8. Mood Tracking (Integrated into Dashboard, but also a dedicated page)
+const MoodTracker = () => {
+    const { db, userId, showMessage } = useContext(AppContext);
+    const [selectedMood, setSelectedMood] = useState('neutral');
+    const [todayMood, setTodayMood] = useState('N/A');
+    const [loadingMood, setLoadingMood] = useState(true);
+
+    useEffect(() => {
+        if (!db || !userId) return;
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setTodayMood(docSnap.data().mood || 'N/A');
+            } else {
+                setTodayMood('N/A');
+            }
+            setLoadingMood(false);
+        }, (error) => {
+            console.error("Error fetching mood data:", error);
+            showMessage("Failed to load mood data.");
+            setLoadingMood(false);
+        });
+
+        return () => unsubscribe();
+    }, [db, userId, showMessage]);
+
+    const handleLogMood = async () => {
+        if (!db || !userId) {
+            showMessage("User not authenticated or database not ready.");
+            return;
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const docRef = doc(db, `artifacts/${__app_id}/users/${userId}/healthData`, today);
+
+        try {
+            const currentData = (await getDoc(docRef)).data() || {};
+            await setDoc(docRef, { ...currentData, mood: selectedMood, date: today }, { merge: true });
+            showMessage(`Mood logged as ${selectedMood}!`);
+        } catch (error) {
+            console.error("Error logging mood:", error);
+            showMessage("Failed to log mood.");
+        }
+    };
+
+    const moodOptions = [
+        { value: 'happy', emoji: '😊', label: 'Happy' },
+        { value: 'energetic', emoji: '💪', label: 'Energetic' },
+        { value: 'neutral', emoji: '😐', label: 'Neutral' },
+        { value: 'tired', emoji: '😴', label: 'Tired' },
+        { value: 'sad', emoji: '😔', label: 'Sad' },
+        { value: 'stressed', emoji: '😥', label: 'Stressed' },
+    ];
+
+    if (loadingMood) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <p className="ml-2 text-gray-600">Loading mood tracker...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Mood Tracker</h2>
+            <div className="mb-6 text-center p-4 bg-orange-50 rounded-lg border border-orange-200">
+                <p className="text-xl font-semibold text-orange-700">Today's Mood:</p>
+                <p className="text-4xl font-bold text-orange-600 mt-2">
+                    {moodOptions.find(m => m.value === todayMood)?.emoji || '❓'} {moodOptions.find(m => m.value === todayMood)?.label || 'Not Logged'}
+                </p>
+            </div>
+
+            <div className="mb-8 p-4 border border-orange-200 rounded-lg bg-orange-50">
+                <p className="block text-gray-700 text-sm font-bold mb-4">How are you feeling today?</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-4">
+                    {moodOptions.map(mood => (
+                        <button
+                            key={mood.value}
+                            onClick={() => setSelectedMood(mood.value)}
+                            className={`p-4 rounded-lg flex flex-col items-center justify-center transition duration-200 ease-in-out
+                                ${selectedMood === mood.value ? 'bg-orange-600 text-white shadow-lg' : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'}`}
+                        >
+                            <span className="text-3xl mb-2">{mood.emoji}</span>
+                            <span className="text-sm font-semibold">{mood.label}</span>
+                        </button>
+                    ))}
+                </div>
+                <button
+                    onClick={handleLogMood}
+                    className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-opacity-50"
+                >
+                    <Smile className="inline-block mr-2" /> Log Mood
+                </button>
+            </div>
+
+            <div className="mt-8 p-4 bg-gray-50 rounded-lg shadow-inner border border-gray-200">
+                <h3 className="text-2xl font-semibold text-blue-700 mb-4">Mood Trends Placeholder</h3>
+                <p className="text-gray-700">This section would show your mood trends over time, helping you identify patterns between your mood and other health metrics like sleep, activity, or diet.</p>
+            </div>
+        </div>
+    );
+};
+
+// 9. Community/Forum Feature (Placeholder)
+const CommunityFeature = () => {
+    const { showMessage } = useContext(AppContext);
+    return (
+        <div className="p-6 bg-white rounded-xl shadow-lg">
+            <h2 className="text-3xl font-bold text-blue-800 mb-6">Community & Forum</h2>
+            <p className="text-gray-700 mb-4">Connect with other fitness enthusiasts, share your progress, ask questions, and find motivation!</p>
+            <div className="bg-green-50 p-4 rounded-lg border border-green-200 text-green-800">
+                <p className="font-semibold mb-2">Feature Placeholder:</p>
+                <p>This would be a social hub where users can create posts, comment, join groups, and participate in discussions. It would require a robust backend for user profiles, content moderation, and real-time updates.</p>
+            </div>
+            <button
+                onClick={() => showMessage("Simulating 'Go to Forum'. Welcome to the FitTrack community!")}
+                className="mt-8 w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
+            >
+                <Users className="inline-block mr-2" /> Explore Community
+            </button>
+        </div>
+    );
+};
+
+// 10. Reminders for Meals and Workouts (Integrated into Notification & Reminder System)
+
+
+export default App;
